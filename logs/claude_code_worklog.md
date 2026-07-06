@@ -119,3 +119,74 @@ Phase 1과 동일하게 유지됨.
 
 ### 다음 작업
 - **Phase 3**: `schedule.js`에 우선순위 로직 반영 (계획은 Phase 1 기록과 동일).
+
+---
+
+## Phase 3 — schedule.js에 표준품셈 기반 기간 계산 반영 (완료)
+
+### 변경 파일
+- **[MODIFY]** `js/core/pumsemMatch.js`: `resolvePumsemPlan(category)` 추가. 카테고리가 **단일** 품셈
+  코드에 매칭되고(코드 2개 이상 혼재 시 하위 품목별 계산 분리는 이번 단계 범위 밖이라 폴백), 매칭 커버리지가
+  `MIN_COVERAGE(0.5)` 이상이며, `fixed_duration`/`curing_wait`가 아니면 수량(qty) 정보가 있어야 유효한
+  계획을 반환한다. 조건 미충족 시 `null`(=금액비례 폴백).
+- **[MODIFY]** `js/core/schedule.js`:
+  - `rebalanceSlotDurations` 이후 "3.5) 표준품셈 매칭 반영" 단계 추가.
+  - `fixed_duration`/`curing_wait` 매칭 공종은 물량과 무관하게 `base_productivity`(고정일수)로
+    duration을 덮어쓰고(locked), 그 변경분(delta)만큼 **나머지 unlocked 슬롯**에서 비례로 흡수해 총
+    근무일수(totalDays)를 정확히 유지한다(`redistributeDelta`, 슬롯별 최대기간 합 기준으로 계산 —
+    `rebalanceSlotDurations`와 동일한 불변식을 공유하도록 설계).
+  - locked 공종의 고정일수 합이 totalDays를 초과하면 기존 `PERIOD_TOO_SHORT` 에러를 재사용해 반환
+    (`minRequired` = 고정일수 합 + unlocked 슬롯 수).
+  - `unit_labor`/`crew_template` 매칭 공종은 duration 값 자체는 바꾸지 않고(=이미 배분된 기간을 목표치로
+    유지), `solveCrewForTargetDuration`으로 역산한 균형 투입인원(crew)을 Activity의 `pumsemPlan` 필드에
+    근거로 남긴다.
+  - 병행 공종(전기/설비/통신/소방)은 이번 단계에서 표준품셈 연동 대상에서 제외(현재 DB에 매칭 항목 없음,
+    윈도우 기반 배치 로직이 개별 슬롯 구조와 달라 별도 설계 필요 — 향후 과제로 명시).
+  - 모든 Activity에 `pumsemPlan` 필드 추가: 매칭 성공 시 `{ code, calculationType, coverage, quantity,
+    crew, fixedDays }`, 실패/미지원(병행) 시 `null`.
+- **[MODIFY]** `js/ui/projectInfoView.js`: `PERIOD_TOO_SHORT` 경고 문구를 "공종 수(N개)"에서
+  "최소 소요일수(N일)"로 수정. Phase 3부터 `minRequired`가 순수 공종 개수가 아니라 표준품셈 고정일수를
+  포함한 값이 될 수 있어, 기존 문구를 그대로 두면 "공종이 17개나 되나?"처럼 사용자를 오도할 수 있음.
+
+### 변경 이유
+사전 분석에서 결정한 우선순위(① 품셈 매칭 성공 → 품셈 계산, ② 실패 → 금액비례, ③ 사용자 수정 → 최우선 [Phase 4])와
+crew 가정 방식(금액비례 기간을 목표치로 역산)을 실제 계산 파이프라인에 반영. `fixed_duration` 매칭은 실제로
+숫자가 바뀌는 유일한 케이스(예: 가설공사가 금액비례 대신 표준품셈 고정 5일로 계산됨)이므로, 이 변경이
+전체 공사기간(totalDays) 불변식을 깨지 않도록 슬롯 단위 재분배 로직을 신중하게 설계함.
+
+### 영향 범위
+- **가설공사**(FIXED-001 매칭, 커버리지 75%)의 duration이 금액비례 값 대신 **고정 5일**로 바뀜 — 이번
+  단계의 유일한 실질적 계산 결과 변경.
+- 철근콘크리트공사/조적공사/방수공사/미장공사/타일공사/도장공사(unit_labor/crew_template 매칭)는
+  duration 숫자는 이전과 동일하게 유지되지만, Activity에 `pumsemPlan`(매칭 코드/수량/역산 crew) 메타데이터가
+  추가로 붙음 — 화면에는 아직 노출하지 않음(Phase 4에서 표시 예정).
+- 나머지 공종(매칭 없음) 및 CPM/Gantt/네트워크/S-Curve 계산 방식은 변경 없음.
+
+### 테스트 결과
+로컬 서버(`npx serve`) + Playwright(헤드리스 Chromium)로 검증:
+1. 샘플 데이터, 공사기간 2026-01-05~2026-06-30(주6일, 근무일 130일) 입력 후 공정표 생성:
+   - 가설공사 duration = **5일** (표준품셈 고정값과 일치), CPM 표/시작·종료일 정상 계산.
+   - 프로젝트 최종 종료일 = **2026-06-30** = 사용자가 입력한 종료일과 정확히 일치 (슬롯 기반 재분배가
+     totalDays 불변식을 정확히 보존함을 확인).
+   - 콘솔/페이지 에러 없음.
+2. `page.evaluate`로 `state.activities[].pumsemPlan` 직접 확인: 크루 수치가 모두 양수/유한값(NaN·Infinity·
+   음수 없음). 예) 조적공사 조적공 7.54명/보통인부 2.06명, 방수공사 방수공 13.95명/보통인부 7.75명 등.
+3. **알려진 한계 발견(수정하지 않고 기록만 함)**: "철근콘크리트공사" 항목은 샘플 데이터상 철근+거푸집+
+   콘크리트 타설을 하나로 묶은 통합 항목(620m³, 62일 배분)인데 키워드 매칭상 CONC-001(콘크리트 타설)
+   하나에만 매칭되어, 역산된 콘크리트공 crew가 0.4명처럼 비현실적으로 낮게 나옴. **원인**: 통합 항목의
+   qty(620m³)는 콘크리트 물량이 맞지만, 목표기간(62일)은 철근/거푸집 작업까지 포함한 전체 골조공사
+   기간이라 "품셈상 순수 콘크리트 타설 소요일수"보다 훨씬 김 → 역산 crew가 작게 나옴. 기능적 오류는
+   아니지만(duration 자체는 이전과 동일하게 유지되어 안전), 향후 `pumsemPlan.crew`를 화면에 노출할 때는
+   이런 통합 항목 케이스에 유의 문구가 필요함.
+4. 극단적 케이스 검증:
+   - 근무일 7일(공종 13개 미만) → 기존 `PERIOD_TOO_SHORT` 정상 발생(회귀 없음).
+   - 근무일 14일(공종 수 기준 13개는 충족하지만, 가설공사 고정 5일 + unlocked 12슬롯 = 최소 17일 필요) →
+     신규 체크가 `PERIOD_TOO_SHORT`(minRequired=17)를 정상 반환. UI 경고 문구도 "최소 소요일수 17일"로
+     정확하게 표시됨.
+
+### 다음 작업
+- **Phase 4**: ③ 탭에 공종별 "기간 직접입력(override)" 필드 추가. 입력 시 `schedule.js`가 해당 공종을
+  pumsem/금액비례보다 우선해 그 값을 그대로 사용하도록 연결(우선순위 ③ 완성).
+  - 이번 Phase 3에서 만든 `activity.pumsemPlan`을 ③ 또는 ④ 탭에 표시해, 사용자가 매칭 근거(코드/수량/
+    역산 crew)를 보고 override 여부를 판단할 수 있게 하면 좋음(선택적 개선).
+- **Phase 5**: `sample/샘플공종별내역.xlsx`(계층형 실제 샘플)로 전체 플로우 재검증, README 갱신, 최종 커밋.

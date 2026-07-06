@@ -160,7 +160,7 @@ function renderGenResult(container, result) {
   }
   const meta = state.scheduleMeta || {};
   if (result.error === "PERIOD_TOO_SHORT") {
-    el.innerHTML = `<div class="alert error">공사기간(근무일 ${meta.totalDays}일)이 공종 수(${meta.minRequired}개)보다 짧아 기간을 배분할 수 없습니다. 공사기간을 늘리거나 공종을 병합하세요.</div>`;
+    el.innerHTML = `<div class="alert error">공사기간(근무일 ${meta.totalDays}일)이 최소 소요일수(${meta.minRequired}일)보다 짧아 기간을 배분할 수 없습니다. 공사기간을 늘리거나 공종을 병합하세요. (표준품셈 고정기간 매칭 공종이 있으면 그 일수가 최소 소요일수에 포함됩니다.)</div>`;
   } else if (result.error === "INVALID_RANGE") {
     el.innerHTML = `<div class="alert error">공사 종료일이 시작일보다 빠릅니다.</div>`;
   } else if (result.error === "CYCLE_DETECTED") {

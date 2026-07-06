@@ -1,4 +1,6 @@
 ﻿import { WorkCalendar } from "../utils/date.js";
+import { resolvePumsemPlan } from "./pumsemMatch.js";
+import { solveCrewForTargetDuration } from "./pumsem.js";
 
 export const SCHEDULE_ERRORS = {
   PERIOD_TOO_SHORT: "PERIOD_TOO_SHORT",
@@ -40,6 +42,57 @@ function rebalanceSlotDurations(slots, durations, targetDays) {
       .forEach((member) => durations.set(member.key, Math.max(1, durations.get(member.key) - 1)));
     excess -= 1;
   }
+}
+
+// pumsemPlans에 담긴 매칭 계획을 Activity에 남길 표시용 근거 정보로 변환한다.
+// fixed_duration/curing_wait는 고정일수를 그대로 쓰고, unit_labor/crew_template는 최종 배분된
+// 기간(finalDuration)을 목표치로 삼아 균형 투입인원을 역산해 함께 기록한다.
+function buildPumsemPlanInfo(plan, finalDuration) {
+  if (!plan) return null;
+  if (plan.fixedDays != null) {
+    return {
+      code: plan.item.code,
+      calculationType: plan.item.calculation_type,
+      coverage: plan.coverage,
+      quantity: null,
+      crew: {},
+      fixedDays: plan.fixedDays,
+    };
+  }
+  const solved = solveCrewForTargetDuration(plan.item, plan.quantity, finalDuration);
+  return {
+    code: plan.item.code,
+    calculationType: plan.item.calculation_type,
+    coverage: plan.coverage,
+    quantity: plan.quantity,
+    crew: solved.crew,
+    fixedDays: null,
+  };
+}
+
+// 표준품셈 fixed_duration/curing_wait 매칭으로 특정 공종의 기간이 고정(locked)되면, 그 변경분(delta)만큼
+// 나머지(unlocked) 슬롯에서 비례로 흡수해 총 근무일수(totalDays, = 슬롯별 최대기간의 합)를 그대로 유지한다.
+// 슬롯 단위(getSlotDuration 기준)로 계산해야 rebalanceSlotDurations와 동일한 불변식을 유지할 수 있다.
+// (참고: 현재 표준품셈 DB의 고정기간 매칭 대상은 항상 단독 슬롯이라 locked/unlocked가 섞인 슬롯은
+// 실전 데이터에 없다. 혼재 슬롯은 안전하게 조정 대상에서 제외한다 — 향후 DB 확장 시 재검토 필요.)
+function redistributeDelta(slots, durations, lockedKeys, delta) {
+  if (delta === 0) return;
+  const unlockedSlots = slots.filter((slot) => slot.members.every((m) => !lockedKeys.has(m.key)));
+  if (unlockedSlots.length === 0) return;
+
+  const unlockedSlotMaxSum = getSlotDurationSum(unlockedSlots, durations);
+  const targetSum = unlockedSlotMaxSum - delta;
+  if (targetSum < unlockedSlots.length) return; // 슬롯당 최소 1일도 못 채우는 극단적 케이스는 조정하지 않음(상위에서 방지)
+
+  const scale = targetSum / unlockedSlotMaxSum;
+  unlockedSlots.forEach((slot) => {
+    slot.members.forEach((m) => {
+      durations.set(m.key, Math.max(1, Math.round(durations.get(m.key) * scale)));
+    });
+  });
+
+  // 슬롯 최대기간의 합이 targetSum과 정확히 일치하도록 반올림 오차 보정 (rebalanceSlotDurations 재사용)
+  rebalanceSlotDurations(unlockedSlots, durations, targetSum);
 }
 
 // 공종(category) 배열을 받아 "기간(duration)"과 "선후관계(predKeys/succKeys)"만 결정한다.
@@ -87,6 +140,39 @@ export function buildSchedule(categories, projectInfo) {
   // 3) 반올림 오차 보정: 슬롯별 최대기간의 합이 totalDays가 되도록 전체 슬롯에서 조정
   rebalanceSlotDurations(slots, durations, totalDays);
 
+  // 3.5) 표준품셈 매칭 반영 (우선순위: ① 품셈 매칭 성공 → 품셈 계산, ② 실패 → 금액비례 유지)
+  // - fixed_duration/curing_wait 매칭: 물량과 무관하게 고정일수를 그대로 사용(locked)하고, 그 변경분만큼
+  //   나머지 공종에서 비례로 흡수해 totalDays를 유지한다.
+  // - unit_labor/crew_template 매칭: 이미 배분된 기간(금액비례 또는 위 locked 반영 후 값)을 목표치로 삼아
+  //   병목이 생기지 않는 균형 투입인원을 역산해 Activity에 근거로 남긴다(기간 값 자체는 바꾸지 않음).
+  const pumsemPlans = new Map();
+  chainCats.forEach((c) => {
+    const plan = resolvePumsemPlan(c);
+    if (plan) pumsemPlans.set(c.key, plan);
+  });
+
+  const lockedKeySet = new Set(
+    chainCats.map((c) => c.key).filter((k) => pumsemPlans.get(k)?.fixedDays != null)
+  );
+  if (lockedKeySet.size > 0) {
+    const unlockedSlots = slots.filter((slot) => slot.members.every((m) => !lockedKeySet.has(m.key)));
+    const lockedFixedSum = Array.from(lockedKeySet).reduce((s, k) => s + pumsemPlans.get(k).fixedDays, 0);
+    const minRequired = lockedFixedSum + unlockedSlots.length;
+    if (minRequired > totalDays) {
+      return {
+        activities: [],
+        error: SCHEDULE_ERRORS.PERIOD_TOO_SHORT,
+        totalDays,
+        minRequired,
+        calendar,
+      };
+    }
+    const oldLockedSum = Array.from(lockedKeySet).reduce((s, k) => s + durations.get(k), 0);
+    const delta = lockedFixedSum - oldLockedSum;
+    lockedKeySet.forEach((k) => durations.set(k, pumsemPlans.get(k).fixedDays));
+    redistributeDelta(slots, durations, lockedKeySet, delta);
+  }
+
   // 4) 슬롯 순서대로 오프셋(근무일 인덱스) 배정 + 선후관계(FS) 연결
   const activities = [];
   const slotMembersByOrder = new Map();
@@ -106,6 +192,7 @@ export function buildSchedule(categories, projectInfo) {
       duration: durations.get(c.key),
       predKeys: [],
       succKeys: [],
+      pumsemPlan: buildPumsemPlanInfo(pumsemPlans.get(c.key), durations.get(c.key)),
     }));
     memberActs.forEach((act) => activities.push(act));
     slotMembersByOrder.set(slot.order, memberActs);
@@ -149,6 +236,8 @@ export function buildSchedule(categories, projectInfo) {
         duration: windowDuration,
         predKeys: predMembers.map((p) => p.key),
         succKeys: succMembers.map((s) => s.key),
+        // 병행 공종(전기/설비/통신/소방 등)은 이번 단계에서 표준품셈 연동 대상이 아니다(현재 DB에 매칭 항목 없음).
+        pumsemPlan: null,
       };
       activities.push(act);
       predMembers.forEach((p) => p.succKeys.push(act.key));

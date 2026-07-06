@@ -1,5 +1,6 @@
 import { autoClassify } from "./core/classify.js";
 import { calcRatios } from "./core/ratio.js";
+import { attachPumsemMatches } from "./core/pumsemMatch.js";
 import { buildSchedule } from "./core/schedule.js";
 import { runCPM } from "./core/cpm.js";
 import { buildSCurve } from "./core/scurve.js";
@@ -34,12 +35,12 @@ export function setRawRows(rows, fileName = "") {
 
 export function classifyAndRatio() {
   const grouped = autoClassify(state.rawRows);
-  state.categories = calcRatios(grouped);
+  state.categories = attachPumsemMatches(calcRatios(grouped));
   return state.categories;
 }
 
 export function recalcRatiosOnly() {
-  state.categories = calcRatios(state.categories);
+  state.categories = attachPumsemMatches(calcRatios(state.categories));
   return state.categories;
 }
 

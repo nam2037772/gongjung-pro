@@ -42,7 +42,7 @@ export function renderClassifyTab(container, ctx) {
           <thead>
             <tr>
               <th>순번</th><th>공종명</th><th>구분</th><th>순서값</th>
-              <th>금액</th><th>보할(%)</th><th>항목수</th><th>병합</th><th></th>
+              <th>금액</th><th>보할(%)</th><th>항목수</th><th>표준품셈</th><th>병합</th><th></th>
             </tr>
           </thead>
           <tbody id="catBody"></tbody>
@@ -67,6 +67,17 @@ export function renderClassifyTab(container, ctx) {
   });
 }
 
+// 카테고리의 표준품셈 매칭 현황을 뱃지로 표시한다 (계산에는 아직 반영되지 않음, 매칭 결과 확인용).
+function renderPumsemBadge(c) {
+  const codes = c.pumsemCodes || [];
+  if (codes.length === 0) {
+    return `<span class="badge muted" title="매칭되는 표준품셈이 없어 금액비례로 계산됩니다.">금액비례</span>`;
+  }
+  const coveragePct = ((c.pumsemCoverage || 0) * 100).toFixed(0);
+  const codeList = codes.map((code) => escapeHtml(code)).join(", ");
+  return `<span class="badge normal" title="매칭 코드: ${codeList} (금액 기준 ${coveragePct}% 매칭)">품셈 ${codes.length}종 (${coveragePct}%)</span>`;
+}
+
 function renderRows(container, ctx) {
   const tbody = container.querySelector("#catBody");
   tbody.innerHTML = state.categories
@@ -85,6 +96,7 @@ function renderRows(container, ctx) {
         <td class="num">${formatWon(c.amount)}</td>
         <td class="num">${c.ratio.toFixed(2)}%</td>
         <td class="num">${(c.items || []).length}</td>
+        <td>${renderPumsemBadge(c)}</td>
         <td>
           <select data-act="mergeTarget">
             <option value="">선택</option>

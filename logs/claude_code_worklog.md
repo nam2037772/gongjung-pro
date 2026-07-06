@@ -77,3 +77,45 @@ Node(`node --input-type` 대신 `pathToFileURL` dynamic import 방식)로 임시
   확장 필요.
 - **Phase 4**: ③ 탭에 기간 직접입력(override) 필드 추가.
 - **Phase 5**: `sample/샘플공종별내역.xlsx`로 전체 플로우 재검증, README 갱신, 최종 커밋 제안.
+
+---
+
+## Phase 2 — 공종별 품셈 매칭 연결 (표시 전용, 완료)
+
+### 변경 파일
+- **[NEW]** `js/core/pumsemMatch.js`: `attachPumsemMatches(categories)` — 카테고리의 리크 항목(items)마다
+  `pumsem.js`의 `matchPumsemItem(name, spec)`을 실행해 각 item에 `pumsemCode`를 붙이고, 카테고리 단위로
+  매칭된 코드 목록(`pumsemCodes`)과 금액 기준 매칭 커버리지(`pumsemCoverage`)를 계산해 반환한다. 계산
+  로직에는 아직 반영하지 않음(표시 전용).
+- **[MODIFY]** `js/state.js`: `classifyAndRatio()`와 `recalcRatiosOnly()`에서 `calcRatios()` 다음에
+  `attachPumsemMatches()`를 거치도록 연결. 카테고리 배열이 바뀌는 모든 경로(최초 분류, 병합/삭제/추가 후
+  재계산)에서 매칭 결과가 항상 최신 상태를 유지하도록 함.
+- **[MODIFY]** `js/ui/classifyView.js`: ③ 탭 표에 "표준품셈" 컬럼 추가. 매칭 성공 시
+  `품셈 N종 (커버리지%)` 뱃지(브랜드색), 매칭 실패 시 `금액비례` 뱃지(회색)를 표시하고 title 툴팁에
+  매칭된 코드 목록을 노출.
+- **[MODIFY]** `styles.css`: 매칭 실패(fallback) 상태를 위한 중립색 `.badge.muted` 클래스 추가 (기존
+  `.badge.critical`은 CPM 탭에서 "주공정선 위험" 의미로 이미 쓰이고 있어 재사용하면 오인 소지가 있어
+  새로 추가).
+
+### 변경 이유
+사용자가 표준품셈 매칭 여부를 먼저 눈으로 확인하고 신뢰할 수 있어야, 다음 단계(Phase 3)에서 실제 기간
+계산에 반영했을 때 결과를 이해하고 검증할 수 있음. 계산 로직과 표시 로직을 단계적으로 분리해 리스크를
+낮춤.
+
+### 영향 범위
+③ 공종/보할 편집 탭에 컬럼 1개 추가(시각적 변경만). `state.categories`에 `pumsemCodes`/`pumsemCoverage`
+필드가 추가되지만 기존 소비처(schedule.js, cpmView 등)는 이 필드를 참조하지 않으므로 기간 계산 결과는
+Phase 1과 동일하게 유지됨.
+
+### 테스트 결과
+- `npx serve`로 로컬 서버 구동 후 Playwright(헤드리스 Chromium)로 실제 브라우저 검증: "샘플 내역서로
+  테스트" 로드 → ③ 탭 이동 → 20개 공종 전체의 뱃지 텍스트/클래스/title 확인.
+- 콘솔/페이지 에러 없음.
+- 매칭 결과: 가설공사→FIXED-001(75%), 철근콘크리트공사→CONC-001(100%), 조적공사→MASON-001(100%),
+  방수공사→WATER-001(100%), 미장공사→PLAST-001(100%), 타일공사→TILE-001(100%), 도장공사→PAINT-001(100%).
+  나머지 13개 공종(토공/지정기초/금속/창호/전기/설비/통신/소방/수장/조경/기구/준공청소)은 현재 DB에
+  대응 품셈이 없어 예상대로 "금액비례" 폴백 — DB 커버리지 한계(사전 분석에서 확인한 내용)와 일치하는
+  정상 동작.
+
+### 다음 작업
+- **Phase 3**: `schedule.js`에 우선순위 로직 반영 (계획은 Phase 1 기록과 동일).

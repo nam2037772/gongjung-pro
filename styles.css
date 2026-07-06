@@ -305,6 +305,11 @@ tr.critical td:first-child {
   color: var(--blue);
 }
 
+.badge.muted {
+  background: var(--soft);
+  color: var(--muted);
+}
+
 .alert {
   padding: 10px 12px;
   border-radius: 8px;

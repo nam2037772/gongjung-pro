@@ -18,7 +18,7 @@ export function renderCpmTab(container, ctx) {
         <table>
           <thead>
             <tr>
-              <th>ID</th><th>공종명</th><th>보할</th><th>기간</th><th>시작일</th><th>종료일</th>
+              <th>ID</th><th>공종명</th><th>보할</th><th>기간</th><th>산정근거</th><th>시작일</th><th>종료일</th>
               <th>선행작업</th><th>후행작업</th><th>ES</th><th>EF</th><th>LS</th><th>LF</th><th>Float</th><th>구분</th>
             </tr>
           </thead>
@@ -45,6 +45,24 @@ export function renderCpmTab(container, ctx) {
   renderBody(container);
 }
 
+// Activity의 기간이 어떤 근거로 정해졌는지 뱃지로 표시한다 (schedule.js의 durationSource/pumsemPlan 기반).
+function renderDurationSourceBadge(a) {
+  if (a.durationSource === "override") {
+    return `<span class="badge normal" title="사용자가 ③ 탭에서 직접 입력한 값입니다.">직접입력</span>`;
+  }
+  if (a.durationSource === "pumsem_fixed") {
+    const code = a.pumsemPlan?.code || "";
+    return `<span class="badge normal" title="표준품셈 ${escapeHtml(code)}의 고정기간을 그대로 사용합니다.">품셈(고정)</span>`;
+  }
+  if (a.durationSource === "pumsem_solved") {
+    const code = a.pumsemPlan?.code || "";
+    const crew = a.pumsemPlan?.crew || {};
+    const crewText = Object.entries(crew).map(([role, n]) => `${role} ${n}명`).join(", ") || "-";
+    return `<span class="badge normal" title="표준품셈 ${escapeHtml(code)} 기준, 현재 기간을 만족하는 균형 투입인원(역산): ${escapeHtml(crewText)}">품셈(역산)</span>`;
+  }
+  return `<span class="badge muted" title="매칭되는 표준품셈이 없어 금액비례로 계산됩니다.">금액비례</span>`;
+}
+
 function renderBody(container) {
   const alertEl = container.querySelector("#cpmAlert");
   const statsEl = container.querySelector("#cpmStats");
@@ -60,7 +78,7 @@ function renderBody(container) {
 
   if (state.activities.length === 0) {
     statsEl.innerHTML = "";
-    tbody.innerHTML = `<tr><td colspan="14" style="text-align:center; color:var(--muted);">아직 계산된 Activity가 없습니다. ② 공사정보 입력 탭에서 "공정표 생성"을 실행하세요.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="15" style="text-align:center; color:var(--muted);">아직 계산된 Activity가 없습니다. ② 공사정보 입력 탭에서 "공정표 생성"을 실행하세요.</td></tr>`;
     return;
   }
 
@@ -80,6 +98,7 @@ function renderBody(container) {
         <td>${escapeHtml(a.name)}</td>
         <td class="num">${a.ratio.toFixed(2)}%</td>
         <td class="num">${a.duration}</td>
+        <td>${renderDurationSourceBadge(a)}</td>
         <td>${a.start}</td>
         <td>${a.end}</td>
         <td>${(a.predIds || []).join(", ") || "-"}</td>

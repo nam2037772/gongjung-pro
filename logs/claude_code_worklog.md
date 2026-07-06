@@ -190,3 +190,57 @@ crew 가정 방식(금액비례 기간을 목표치로 역산)을 실제 계산 
   - 이번 Phase 3에서 만든 `activity.pumsemPlan`을 ③ 또는 ④ 탭에 표시해, 사용자가 매칭 근거(코드/수량/
     역산 crew)를 보고 override 여부를 판단할 수 있게 하면 좋음(선택적 개선).
 - **Phase 5**: `sample/샘플공종별내역.xlsx`(계층형 실제 샘플)로 전체 플로우 재검증, README 갱신, 최종 커밋.
+
+---
+
+## Phase 4 — ③ 탭 기간 직접입력(사용자 override) UI 추가 (완료, 우선순위 ③ 완성)
+
+### 변경 파일
+- **[MODIFY]** `js/state.js`: `setCategoryDurationOverride(key, days)` 추가. 유효한 양수를 입력하면
+  `category.durationOverride`에 저장하고, 빈 값/0 이하/숫자가 아니면 필드를 삭제해 자동 계산으로 복귀시킨다.
+- **[MODIFY]** `js/core/schedule.js`:
+  - `resolveDurationSource(category, plan)` 추가 — Activity의 기간이 `override`/`pumsem_fixed`/
+    `pumsem_solved`/`ratio` 중 무엇으로 결정됐는지 표시용으로 남긴다.
+  - locked(고정) 계산을 `lockedFinal` 맵으로 통합: `durationOverride`가 있으면 그 값을 최우선으로,
+    없으면 기존 pumsem `fixed_duration`/`curing_wait` 값을 사용. 두 경우 모두 동일한 슬롯 기반
+    `redistributeDelta`로 나머지 공종에 비례 배분해 totalDays 불변식을 유지한다(Phase 3 로직 재사용,
+    분기만 override 우선으로 확장).
+  - 병행 공종(전기/설비/통신/소방)에도 override를 동일하게 적용(윈도우 기반 배치 로직은 그대로 두되,
+    override가 있으면 windowDuration 대신 그 값을 사용).
+  - 모든 Activity에 `durationSource` 필드 추가.
+- **[MODIFY]** `js/ui/classifyView.js`: ③ 탭 표에 "기간 직접입력(일)" 컬럼(숫자 입력, placeholder="자동")
+  추가. 값을 입력/삭제하면 `setCategoryDurationOverride` 호출 후 "② 탭에서 공정표 생성을 다시 실행해야
+  반영됩니다" 토스트 안내(기존 공종명/구분/순서 편집과 동일하게, 재계산은 사용자가 ②/④에서 명시적으로
+  트리거하는 기존 UX 패턴을 그대로 따름 — 자동 재계산으로 바꾸는 건 범위 밖의 UX 변경이라 하지 않음).
+- **[MODIFY]** `js/ui/cpmView.js`: ④ 탭 표에 "산정근거" 컬럼 추가. `durationSource`에 따라
+  `직접입력`/`품셈(고정)`/`품셈(역산, title에 매칭코드+역산crew 표시)`/`금액비례` 뱃지를 표시해, 사용자가
+  왜 이 기간이 나왔는지 보고 override 여부를 판단할 수 있게 함(Phase 3 worklog에 남긴 "선택적 개선"을
+  이번 단계에서 함께 반영).
+
+### 변경 이유
+사전 확정한 계산 우선순위(① 품셈 매칭 → ② 금액비례 폴백 → ③ 사용자 직접입력 최우선)의 마지막 조각을
+완성. override는 pumsem 매칭 여부와 무관하게(매칭 성공/실패 카테고리 모두) 최우선 적용되어야 하므로,
+Phase 3의 "pumsem fixed_duration locked" 로직을 override까지 포괄하는 일반화된 `lockedFinal` 맵으로
+확장했다(완전히 새로 만들지 않고 기존 slot 기반 redistribute 메커니즘을 재사용 — 대규모 리팩토링 회피).
+
+### 영향 범위
+- ③ 탭에 입력 컬럼 1개, ④ 탭에 표시 컬럼 1개 추가. override를 입력하지 않으면 Phase 3까지의 동작과
+  100% 동일(디폴트 동작 무변화).
+- override 입력 시: 해당 공종 duration이 그 값으로 고정되고, 변경분(delta)만큼 나머지 공종에 비례
+  재배분되어 총 근무일수(totalDays)는 항상 그대로 유지됨.
+
+### 테스트 결과
+로컬 서버 + Playwright로 검증 (샘플 데이터, 2026-01-05~2026-06-30, 근무일 130일):
+1. "철근콘크리트공사"(기존 pumsem_solved, 62일)에 20일을 직접 입력 → ② 탭에서 "공정표 생성" 재실행 후
+   확인: `duration=20`, `durationSource="override"`. 다른 공종들(토공사 4→6일, 지정기초 9→14일,
+   금속공사 10→15일 등)이 42일의 delta를 비례로 흡수. **프로젝트 최종 종료일은 여전히 2026-06-30로
+   사용자 입력값과 정확히 일치**(큰 폭의 delta에서도 슬롯 기반 재분배 불변식이 견고함을 확인).
+2. override 입력란을 비우고 재실행 → `duration=62`, `durationSource="pumsem_solved"`로 정상 복귀
+   (override 해제 시 자동 계산으로 되돌아가는 동작 확인).
+3. 콘솔/페이지 에러 없음.
+4. (Phase 1~3과 동일 조건 회귀 확인) override 없이 실행 시 가설공사=5일(pumsem_fixed), 조적/방수/
+   미장/타일/도장=pumsem_solved, 나머지=ratio로 Phase 3과 동일한 결과 유지.
+
+### 다음 작업
+- **Phase 5**: `sample/샘플공종별내역.xlsx`(계층형 실제 샘플)로 전체 플로우 재검증, 엑셀/CSV/JSON
+  다운로드까지 확인, README의 "주요 로직 설명"/"알려진 제한사항"에 표준품셈 연동 내용 반영, 최종 커밋 제안.

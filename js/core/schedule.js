@@ -44,6 +44,15 @@ function rebalanceSlotDurations(slots, durations, targetDays) {
   }
 }
 
+// Activity의 기간이 실제로 어떤 근거로 결정됐는지 표시용으로 남긴다.
+// override(사용자 직접입력) > pumsem_fixed(품셈 고정기간) > pumsem_solved(품셈 역산) > ratio(금액비례) 순.
+function resolveDurationSource(category, plan) {
+  if (category.durationOverride && category.durationOverride > 0) return "override";
+  if (plan?.fixedDays != null) return "pumsem_fixed";
+  if (plan) return "pumsem_solved";
+  return "ratio";
+}
+
 // pumsemPlans에 담긴 매칭 계획을 Activity에 남길 표시용 근거 정보로 변환한다.
 // fixed_duration/curing_wait는 고정일수를 그대로 쓰고, unit_labor/crew_template는 최종 배분된
 // 기간(finalDuration)을 목표치로 삼아 균형 투입인원을 역산해 함께 기록한다.
@@ -140,23 +149,33 @@ export function buildSchedule(categories, projectInfo) {
   // 3) 반올림 오차 보정: 슬롯별 최대기간의 합이 totalDays가 되도록 전체 슬롯에서 조정
   rebalanceSlotDurations(slots, durations, totalDays);
 
-  // 3.5) 표준품셈 매칭 반영 (우선순위: ① 품셈 매칭 성공 → 품셈 계산, ② 실패 → 금액비례 유지)
-  // - fixed_duration/curing_wait 매칭: 물량과 무관하게 고정일수를 그대로 사용(locked)하고, 그 변경분만큼
-  //   나머지 공종에서 비례로 흡수해 totalDays를 유지한다.
-  // - unit_labor/crew_template 매칭: 이미 배분된 기간(금액비례 또는 위 locked 반영 후 값)을 목표치로 삼아
-  //   병목이 생기지 않는 균형 투입인원을 역산해 Activity에 근거로 남긴다(기간 값 자체는 바꾸지 않음).
+  // 3.5) 우선순위 반영: ① 품셈 매칭 성공 → 품셈 계산, ② 실패 → 금액비례 유지, ③ 사용자 직접입력 → 최우선
+  // - 사용자가 ③ 탭에서 기간을 직접 입력한 공종(durationOverride)은 표준품셈 결과보다도 우선해 그 값을
+  //   그대로 고정(locked)한다.
+  // - durationOverride가 없고 fixed_duration/curing_wait 매칭된 공종은 물량과 무관하게 고정일수를
+  //   그대로 사용(locked)한다.
+  // - 위 두 경우 모두, 변경분만큼 나머지 공종에서 비례로 흡수해 totalDays를 유지한다.
+  // - unit_labor/crew_template 매칭 공종은 최종 배분된 기간(금액비례 또는 locked 반영 후 값)을 목표치로
+  //   삼아 병목이 생기지 않는 균형 투입인원을 역산해 Activity에 근거로 남긴다(기간 값 자체는 바꾸지 않음).
   const pumsemPlans = new Map();
   chainCats.forEach((c) => {
     const plan = resolvePumsemPlan(c);
     if (plan) pumsemPlans.set(c.key, plan);
   });
 
-  const lockedKeySet = new Set(
-    chainCats.map((c) => c.key).filter((k) => pumsemPlans.get(k)?.fixedDays != null)
-  );
-  if (lockedKeySet.size > 0) {
+  const lockedFinal = new Map();
+  chainCats.forEach((c) => {
+    if (c.durationOverride && c.durationOverride > 0) {
+      lockedFinal.set(c.key, Math.round(c.durationOverride));
+    } else if (pumsemPlans.get(c.key)?.fixedDays != null) {
+      lockedFinal.set(c.key, pumsemPlans.get(c.key).fixedDays);
+    }
+  });
+
+  if (lockedFinal.size > 0) {
+    const lockedKeySet = new Set(lockedFinal.keys());
     const unlockedSlots = slots.filter((slot) => slot.members.every((m) => !lockedKeySet.has(m.key)));
-    const lockedFixedSum = Array.from(lockedKeySet).reduce((s, k) => s + pumsemPlans.get(k).fixedDays, 0);
+    const lockedFixedSum = Array.from(lockedFinal.values()).reduce((s, v) => s + v, 0);
     const minRequired = lockedFixedSum + unlockedSlots.length;
     if (minRequired > totalDays) {
       return {
@@ -169,7 +188,7 @@ export function buildSchedule(categories, projectInfo) {
     }
     const oldLockedSum = Array.from(lockedKeySet).reduce((s, k) => s + durations.get(k), 0);
     const delta = lockedFixedSum - oldLockedSum;
-    lockedKeySet.forEach((k) => durations.set(k, pumsemPlans.get(k).fixedDays));
+    lockedFinal.forEach((v, k) => durations.set(k, v));
     redistributeDelta(slots, durations, lockedKeySet, delta);
   }
 
@@ -193,6 +212,7 @@ export function buildSchedule(categories, projectInfo) {
       predKeys: [],
       succKeys: [],
       pumsemPlan: buildPumsemPlanInfo(pumsemPlans.get(c.key), durations.get(c.key)),
+      durationSource: resolveDurationSource(c, pumsemPlans.get(c.key)),
     }));
     memberActs.forEach((act) => activities.push(act));
     slotMembersByOrder.set(slot.order, memberActs);
@@ -226,6 +246,7 @@ export function buildSchedule(categories, projectInfo) {
     const succMembers = endOrder ? slotMembersByOrder.get(endOrder) : [];
 
     parallelCats.forEach((c) => {
+      const overridden = c.durationOverride && c.durationOverride > 0;
       const act = {
         key: c.key,
         name: c.name,
@@ -233,11 +254,13 @@ export function buildSchedule(categories, projectInfo) {
         order: c.order,
         ratio: c.ratio,
         amount: c.amount,
-        duration: windowDuration,
+        duration: overridden ? Math.round(c.durationOverride) : windowDuration,
         predKeys: predMembers.map((p) => p.key),
         succKeys: succMembers.map((s) => s.key),
         // 병행 공종(전기/설비/통신/소방 등)은 이번 단계에서 표준품셈 연동 대상이 아니다(현재 DB에 매칭 항목 없음).
+        // 단, 사용자 직접입력(우선순위 최상위)은 병행 공종에도 동일하게 적용한다.
         pumsemPlan: null,
+        durationSource: overridden ? "override" : "ratio",
       };
       activities.push(act);
       predMembers.forEach((p) => p.succKeys.push(act.key));

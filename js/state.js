@@ -56,6 +56,19 @@ export function updateCategoryMeta(key, { lane, order } = {}) {
   if (order !== undefined && order !== null && !Number.isNaN(order)) c.order = Number(order);
 }
 
+// 사용자가 공종의 기간을 직접 입력하면(우선순위 최상위), schedule.js는 표준품셈/금액비례 계산을
+// 건너뛰고 이 값을 그대로 사용한다. 빈 값/0 이하/숫자가 아니면 override를 해제해 자동 계산으로 되돌린다.
+export function setCategoryDurationOverride(key, days) {
+  const c = state.categories.find((c) => c.key === key);
+  if (!c) return;
+  const n = Number(days);
+  if (days === "" || days === null || days === undefined || Number.isNaN(n) || n <= 0) {
+    delete c.durationOverride;
+  } else {
+    c.durationOverride = Math.round(n);
+  }
+}
+
 export function deleteCategory(key) {
   state.categories = state.categories.filter((c) => c.key !== key);
   recalcRatiosOnly();

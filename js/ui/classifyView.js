@@ -1,4 +1,4 @@
-﻿import { state, renameCategory, updateCategoryMeta, deleteCategory, mergeCategories, addCustomCategory, recalcRatiosOnly } from "../state.js";
+﻿import { state, renameCategory, updateCategoryMeta, deleteCategory, mergeCategories, addCustomCategory, recalcRatiosOnly, setCategoryDurationOverride } from "../state.js";
 import { sumRatio } from "../core/ratio.js";
 import { formatWon } from "../utils/number.js";
 import { escapeHtml } from "../utils/html.js";
@@ -42,7 +42,7 @@ export function renderClassifyTab(container, ctx) {
           <thead>
             <tr>
               <th>순번</th><th>공종명</th><th>구분</th><th>순서값</th>
-              <th>금액</th><th>보할(%)</th><th>항목수</th><th>표준품셈</th><th>병합</th><th></th>
+              <th>금액</th><th>보할(%)</th><th>항목수</th><th>표준품셈</th><th>기간 직접입력(일)</th><th>병합</th><th></th>
             </tr>
           </thead>
           <tbody id="catBody"></tbody>
@@ -98,6 +98,10 @@ function renderRows(container, ctx) {
         <td class="num">${(c.items || []).length}</td>
         <td>${renderPumsemBadge(c)}</td>
         <td>
+          <input type="number" min="1" step="1" data-act="durationOverride" value="${c.durationOverride ?? ""}"
+            placeholder="자동" style="width:80px;" title="입력하면 표준품셈/금액비례 계산보다 우선해 이 값을 그대로 사용합니다. 비워두면 자동 계산으로 돌아갑니다." />
+        </td>
+        <td>
           <select data-act="mergeTarget">
             <option value="">선택</option>
             ${state.categories
@@ -124,6 +128,11 @@ function renderRows(container, ctx) {
     });
     tr.querySelector('[data-act="order"]').addEventListener("change", (e) => {
       updateCategoryMeta(key, { order: parseInt(e.target.value, 10) });
+      ctx.refreshAll();
+    });
+    tr.querySelector('[data-act="durationOverride"]').addEventListener("change", (e) => {
+      setCategoryDurationOverride(key, e.target.value);
+      showToast("기간을 직접 입력했습니다. ② 탭에서 \"공정표 생성\"을 다시 실행해야 반영됩니다.");
       ctx.refreshAll();
     });
     tr.querySelector('[data-act="mergeBtn"]').addEventListener("click", () => {

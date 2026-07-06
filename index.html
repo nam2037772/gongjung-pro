@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>공정표프로</title>
+  <meta name="description" content="엑셀 공종별 내역서로 CPM 예정공정표 초안을 만드는 실무형 작업대" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">CPM 예정공정표 작업대</p>
+      <h1>공정표프로</h1>
+    </div>
+    <div class="top-actions">
+      <button id="sampleBtn" type="button">샘플 내역서로 테스트</button>
+      <button id="resetBtn" type="button" class="danger">초기화</button>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="upload" type="button">① 엑셀 업로드</button>
+    <button class="tab" data-tab="project" type="button">② 공사정보 입력</button>
+    <button class="tab" data-tab="classify" type="button">③ 공종/보할 편집</button>
+    <button class="tab" data-tab="cpm" type="button">④ CPM 데이터</button>
+    <button class="tab" data-tab="network" type="button">⑤ CPM 네트워크</button>
+    <button class="tab" data-tab="gantt" type="button">⑥ 예정공정표</button>
+    <button class="tab" data-tab="export" type="button">⑦ 출력/다운로드</button>
+  </nav>
+
+  <main class="shell-main">
+    <section class="tab-panel active" id="panel-upload"></section>
+    <section class="tab-panel" id="panel-project"></section>
+    <section class="tab-panel" id="panel-classify"></section>
+    <section class="tab-panel" id="panel-cpm"></section>
+    <section class="tab-panel" id="panel-network"></section>
+    <section class="tab-panel" id="panel-gantt"></section>
+    <section class="tab-panel" id="panel-export"></section>
+  </main>
+
+  <div id="print-root"></div>
+  <div id="toast"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

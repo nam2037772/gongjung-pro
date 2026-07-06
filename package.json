@@ -1,0 +1,11 @@
+{
+  "name": "gongjeongpyo-pro",
+  "version": "1.0.0",
+  "private": true,
+  "description": "엑셀 공종별 내역서를 업로드하면 공사기간 기준으로 CPM 예정공정표 초안을 자동 생성하는 정적 웹앱",
+  "scripts": {
+    "dev": "npx --yes serve . -l 5173",
+    "start": "npx --yes serve . -l 5173",
+    "build": "node -e \"console.log('정적 웹앱(HTML/CSS/ES Modules)이라 별도 번들링이 필요 없습니다. index.html이 그대로 배포 산출물입니다.')\""
+  }
+}
